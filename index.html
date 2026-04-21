@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart AQI Monitor</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+
+<style>
+body {
+  background: #0d1117;
+  color: #e6edf3;
+  font-family: 'Segoe UI', sans-serif;
+  padding: 20px;
+  margin: 0;
+}
+
+.aqi-main {
+  text-align: center;
+  margin-bottom: 20px;
+  padding: 30px;
+  background: #161b22;
+  border-radius: 15px;
+  box-shadow: 0 0 30px rgba(0,255,100,0.1);
+}
+
+#aqiValue {
+  font-size: 80px;
+  font-weight: 700;
+}
+
+#aqiStatus {
+  font-size: 22px;
+  margin-top: 10px;
+}
+
+#aqiDesc {
+  font-size: 14px;
+  color: #8b949e;
+  margin-top: 10px;
+}
+
+#alert {
+  display: none;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 15px;
+  font-weight: 600;
+}
+
+#alert.show {
+  display: block;
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 15px;
+}
+
+.card {
+  background: #161b22;
+  padding: 15px;
+  border-radius: 10px;
+}
+
+#prediction,
+#anomaly,
+#rawValue,
+#ppmValue,
+#voltageValue,
+#confidenceValue {
+  font-size: 14px;
+  color: #8b949e;
+  margin: 8px 0;
+}
+
+@media (max-width: 768px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  #aqiValue {
+    font-size: 56px;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<div class="aqi-main">
+  <div id="aqiValue">--</div>
+  <div id="aqiStatus">Waiting for live data...</div>
+  <div id="aqiDesc">Make sure Arduino is connected and sending data.</div>
+</div>
+
+<div id="alert"></div>
+
+<div class="grid">
+
+  <div class="card">
+    <h3>Air Quality Trend</h3>
+    <canvas id="chart"></canvas>
+  </div>
+
+  <div class="card">
+    <h3>Insights</h3>
+    <p id="prediction">Waiting for prediction...</p>
+    <p id="anomaly">Anomaly: --</p>
+    <p id="rawValue">Raw Sensor Value: --</p>
+    <p id="ppmValue">PPM: --</p>
+    <p id="voltageValue">Voltage: --</p>
+    <p id="confidenceValue">Confidence: --</p>
+  </div>
+
+</div>
+
+<script>
+const API = "http://127.0.0.1:5000";
+
+function getDesc(status) {
+  switch (status) {
+    case "Good":
+      return "Air is clean and safe.";
+    case "Moderate":
+      return "Acceptable, but sensitive people should be careful.";
+    case "Poor":
+      return "Air pollution increasing. Limit outdoor time.";
+    case "Unhealthy":
+      return "Everyone may feel effects.";
+    case "Severe":
+      return "Serious health risk. Avoid outdoor exposure.";
+    case "Hazardous":
+      return "Emergency condition. Stay indoors.";
+    default:
+      return "Waiting for valid sensor reading.";
+  }
+}
+
+function getColor(status) {
+  switch (status) {
+    case "Good":
+      return "#00e400";
+    case "Moderate":
+      return "#ffff00";
+    case "Poor":
+      return "#ff7e00";
+    case "Unhealthy":
+      return "#ff0000";
+    case "Severe":
+      return "#8f3f97";
+    case "Hazardous":
+      return "#7e0023";
+    default:
+      return "#e6edf3";
+  }
+}
+
+const ctx = document.getElementById("chart").getContext("2d");
+const chart = new Chart(ctx, {
+  type: "line",
+  data: {
+    labels: [],
+    datasets: [{
+      label: "AQI",
+      data: [],
+      borderColor: "#58a6ff",
+      backgroundColor: "rgba(88,166,255,0.15)",
+      borderWidth: 2,
+      tension: 0.3,
+      fill: true
+    }]
+  },
+  options: {
+    responsive: true,
+    animation: false,
+    plugins: {
+      legend: {
+        display: false
+      }
+    },
+    scales: {
+      x: {
+        ticks: { color: "#8b949e" },
+        grid: { color: "rgba(255,255,255,0.05)" }
+      },
+      y: {
+        ticks: { color: "#8b949e" },
+        grid: { color: "rgba(255,255,255,0.05)" },
+        beginAtZero: true
+      }
+    }
+  }
+});
+
+async function update() {
+  try {
+    const res = await fetch(API + "/api/live");
+
+    if (!res.ok) {
+      const errData = await res.json();
+      document.getElementById("aqiValue").innerText = "--";
+      document.getElementById("aqiStatus").innerText = "No live data";
+      document.getElementById("aqiStatus").style.color = "#e6edf3";
+      document.getElementById("aqiValue").style.color = "#e6edf3";
+      document.getElementById("aqiDesc").innerText = errData.error || "Waiting for sensor data...";
+      return;
+    }
+
+    const d = await res.json();
+    const color = getColor(d.aqi_status);
+
+    document.getElementById("aqiValue").innerText = d.aqi ?? "--";
+    document.getElementById("aqiValue").style.color = color;
+
+    document.getElementById("aqiStatus").innerText = d.aqi_status ?? "Unknown";
+    document.getElementById("aqiStatus").style.color = color;
+
+    document.getElementById("aqiDesc").innerText = getDesc(d.aqi_status);
+
+    const alertBox = document.getElementById("alert");
+    if (d.anomaly === "Anomaly 🚨") {
+      alertBox.innerText = "⚠ Pollution Spike Detected!";
+      alertBox.classList.add("show");
+    } else if ((d.aqi ?? 0) > 150) {
+      alertBox.innerText = "⚠ Air Quality is Unhealthy!";
+      alertBox.classList.add("show");
+    } else {
+      alertBox.classList.remove("show");
+      alertBox.innerText = "";
+    }
+
+    if (d.future_ppm !== null && d.future_ppm !== undefined) {
+      document.getElementById("prediction").innerText =
+        "Forecasted PPM: " + d.future_ppm;
+    } else {
+      document.getElementById("prediction").innerText =
+        "Collecting enough data for prediction...";
+    }
+
+    document.getElementById("anomaly").innerText =
+      "Anomaly Status: " + (d.anomaly ?? "--");
+
+    document.getElementById("rawValue").innerText =
+      "Raw Sensor Value: " + (d.gas1_raw ?? "--");
+
+    document.getElementById("ppmValue").innerText =
+      "PPM: " + (d.ppm ?? "--");
+
+    document.getElementById("voltageValue").innerText =
+      "Voltage: " + (d.voltage ?? "--");
+
+    document.getElementById("confidenceValue").innerText =
+      "Confidence: " + ((d.confidence ?? "--") + "%");
+
+    chart.data.labels.push(new Date().toLocaleTimeString());
+    chart.data.datasets[0].data.push(d.aqi ?? 0);
+
+    if (chart.data.labels.length > 20) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+    }
+
+    chart.update();
+
+  } catch (e) {
+    console.error("Live fetch error:", e);
+    document.getElementById("aqiStatus").innerText = "Connection error";
+    document.getElementById("aqiDesc").innerText = "Check Flask server and Arduino connection.";
+  }
+}
+
+setInterval(update, 1000);
+update();
+</script>
+
+</body>
+</html>
